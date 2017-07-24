@@ -5,4 +5,5 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure "1.8.0"]
                  [instaparse "1.4.7"]
+                 [kunstmusik/pink "0.4.0-SNAPSHOT"]
                  ])
