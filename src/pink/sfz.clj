@@ -1,11 +1,15 @@
 (ns pink.sfz
   (:require [instaparse.core :refer [defparser]]))
 
+
+;; TODO - sfz allows spaces in filesnames for samples.
+;; This parser code works if the sample is defined on its own line
 (defparser parse-sfz
-    "<sfz> = <ws-or-comment?> section* <ws-or-comment?> 
-    section = <'<'> #'[^\\s>]+' <'>'> <ws-or-comment?> opcode*
-    opcode = (word <'='> word) <ws-or-comment?>
+    "<sfz> = <ws-or-comment*> section* <ws-or-comment*> 
+    section = <'<'> #'[^\\s>]+' <'>'> <ws-or-comment*> opcode*
+    opcode = (word <'='> (spaced-word | word)) <ws-or-comment*>
     <word> = #'[^\\s=\\n\\r]+'
+    <spaced-word> = #'[^=\\r\\n]+' <#'[\\r\\n|\\n]'>
     ws-or-comment = ws | comment
     ws = #'\\s+'
     comment = #'//[^\\r\\n]*[\\r\\n|\\n]?'")
@@ -14,7 +18,7 @@
   [oplist]
   (reduce
     (fn [a [_ x y]]
-      (assoc a (keyword x) y)) 
+      (assoc a (keyword x) (clojure.string/trim y))) 
     {}
     oplist))
 
@@ -56,9 +60,30 @@
    sfz
    ))
 
-(def test-sfz "// group\n<group> <region> filter=4 b=3 sample=../abc/def.wav
+
+;; 
+
+(defn load-sfz
+  [sfz-file]
+  (let [sfz-txt (slurp sfz-file)
+        sfz-parse (parse-sfz sfz-txt)
+        sfz (transform-parse-tree sfz-parse)
+        ]
+    sfz
+    ))
+
+(def test-sfz " // group\n<group> <region> filter=4\n b=3\r\n sample=../abc/def.wav
                <region> filter=4 b=3 sample=../abc/fgh.wav")
 
-(let [sfz-state {}
-      sfz (parse-sfz test-sfz)]
-  (transform-parse-tree sfz ))
+;; http://virtualplaying.com/virtual-playing-orchestra/ 
+(def VPO2-root
+  (str (System/getenv "PINK_RESOURCE_ROOT") 
+  "/sfz/Virtual-Playing-Orchestra2"))
+
+(def test-sfz-file
+  (str VPO2-root
+       "/Strings/1st-violin-SEC-sustain.sfz"))
+
+(transform-parse-tree (parse-sfz test-sfz))
+
+(clojure.pprint/pprint (load-sfz test-sfz-file))
