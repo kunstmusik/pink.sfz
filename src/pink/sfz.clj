@@ -1,5 +1,7 @@
 (ns pink.sfz
-  (:require [instaparse.core :refer [defparser]]))
+  (:require [instaparse.core :refer [defparser]]
+            [score.freq :refer [str->notenum]]
+            ))
 
 
 ;; TODO - sfz allows spaces in filesnames for samples.
@@ -39,13 +41,34 @@
           conj {:params {}
                 :regions [] }))
 
+(defn get-notenum [str-val]
+  (try 
+    (Long/valueOf str-val)
+    (catch Exception e
+      (str->notenum str-val))))
+
+(defn add-region-analysis
+  "Converts keys to midi note numbers (long), and..."
+  [region-map]
+  (let [{:keys [key lokey hikey pitch_keycenter] :or {key -1}} region-map 
+        ]
+    (->
+      region-map
+      (assoc :lokey  (get-notenum (if lokey lokey key)))
+      (assoc :hikey  (get-notenum (if hikey hikey key)))
+      (assoc :pitch_keycenter  (get-notenum (if pitch_keycenter pitch_keycenter key)))
+      )))
+
 (defmethod handle-section :region
   [sfz-state section]
   (let [indx (dec (count (sfz-state :groups)))]
     (if (neg? indx)
       (throw (Exception. "No group defined before region"))
-      (let [opmap (opcodes->map (rest (rest section)))]
-        (update-in sfz-state [:groups indx :regions] conj opmap)))))
+      (->>
+        (opcodes->map (rest (rest section)))
+        (add-region-analysis)
+        (update-in sfz-state [:groups indx :regions] conj)
+        ))))
 
 (defmethod handle-section :default 
   [sfz-state section]
@@ -86,4 +109,22 @@
 
 (transform-parse-tree (parse-sfz test-sfz))
 
-(clojure.pprint/pprint (load-sfz test-sfz-file))
+(def sfz-data (load-sfz test-sfz-file))
+
+#_(clojure.pprint/pprint sfz-data)
+
+
+(defn sfz-lookup 
+  "Finds regions to play within sfz based upon group, midi-key, and midi-vel."
+  [sfz-data group-num midi-key midi-vel]
+  (let [regions (get-in sfz-data [:groups group-num :regions])]
+    (filter #(and (>= midi-key (:lokey %)) 
+                  (<= midi-key (:hikey %))) 
+            regions)))
+
+;; Process
+;; 1. Lookup regions to play based upon MIDI key (allow fractional?) and MIDI velocity (again, fractional?)
+;; 2. setup playback depending upon settings from global, group, and region
+;; 3. Playback
+
+
