@@ -95,6 +95,14 @@
     sfz
     ))
 
+(defn sfz-lookup 
+  "Finds regions to play within sfz based upon group, midi-key, and midi-vel."
+  [sfz-data group-num midi-key midi-vel]
+  (let [regions (get-in sfz-data [:groups group-num :regions])]
+    (filter #(and (>= midi-key (:lokey %)) 
+                  (<= midi-key (:hikey %))) 
+            regions)))
+
 (def test-sfz " // group\n<group> <region> filter=4\n b=3\r\n sample=../abc/def.wav
                <region> filter=4 b=3 sample=../abc/fgh.wav")
 
@@ -113,14 +121,6 @@
 
 #_(clojure.pprint/pprint sfz-data)
 
-
-(defn sfz-lookup 
-  "Finds regions to play within sfz based upon group, midi-key, and midi-vel."
-  [sfz-data group-num midi-key midi-vel]
-  (let [regions (get-in sfz-data [:groups group-num :regions])]
-    (filter #(and (>= midi-key (:lokey %)) 
-                  (<= midi-key (:hikey %))) 
-            regions)))
 
 ;; Process
 ;; 1. Lookup regions to play based upon MIDI key (allow fractional?) and MIDI velocity (again, fractional?)
