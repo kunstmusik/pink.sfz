@@ -38,7 +38,7 @@
 (defmethod handle-section :group
   [sfz-state section]
   (update sfz-state :groups
-          conj {:params {}
+          conj {:params (opcodes->map (rest (rest section)))
                 :regions [] }))
 
 (defn get-notenum [str-val]
@@ -115,10 +115,11 @@
   (str VPO2-root
        "/Strings/1st-violin-SEC-sustain.sfz"))
 
-(transform-parse-tree (parse-sfz test-sfz))
+#_(transform-parse-tree (parse-sfz test-sfz))
 
 (def sfz-data (load-sfz test-sfz-file))
 
+#_(clojure.pprint/pprint (parse-sfz (slurp test-sfz-file)))
 #_(clojure.pprint/pprint sfz-data)
 
 
