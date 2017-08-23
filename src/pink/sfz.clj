@@ -1,7 +1,9 @@
 (ns pink.sfz
   (:require [instaparse.core :refer [defparser]]
-            [score.freq :refer [str->notenum]]
-            ))
+            [score.freq :refer [str->notenum
+                                cents->scaler ]]
+            [pink.sfz.sound-file :refer :all])
+  (:import [java.io File]))
 
 
 ;; TODO - sfz allows spaces in filesnames for samples.
@@ -47,17 +49,52 @@
     (catch Exception e
       (str->notenum str-val))))
 
+(defn setup-defaults-for-region
+  [sfz-file pre-map]
+  (let [sfz-dir (.getParent (File. sfz-file))
+        region-sample-file (str sfz-dir File/separator (:sample pre-map))
+        wav-data (get-wav-data region-sample-file)
+        k (:key pre-map)
+        start (if k 
+                (let [kdefault (get-notenum k)]
+                  {:lokey kdefault
+                   :hikey kdefault
+                   :pitch_keycenter kdefault
+                   } )
+                {}) 
+        init (assoc start :wav-data wav-data)]
+      (if-let [loop-data (get-in wav-data ["smpl" :sample-loops 0])]
+        (-> 
+          init 
+          (assoc :loop_start (:start loop-data))
+          (assoc :loop_end (:end loop-data)))
+        init ) ))
+
+(defn process-region
+  [init-map rest-map]
+  (reduce
+    (fn [a [k v]]
+      (case k
+        :lokey (assoc a :lokey (get-notenum v)) 
+        :hikey (assoc a :hikey (get-notenum v)) 
+        :pitch_keycenter (assoc a :pitch_keycenter (get-notenum v)) 
+        :tune (assoc a :tune (cents->scaler (Long/valueOf v)))
+        (do 
+          (println "Unsupported opcode found [" k "] skipping...")
+          a)
+        )) 
+    init-map rest-map))
+
 (defn add-region-analysis
   "Converts keys to midi note numbers (long), and..."
-  [region-map]
-  (let [{:keys [key lokey hikey pitch_keycenter] :or {key -1}} region-map 
-        ]
-    (->
-      region-map
-      (assoc :lokey  (get-notenum (if lokey lokey key)))
-      (assoc :hikey  (get-notenum (if hikey hikey key)))
-      (assoc :pitch_keycenter  (get-notenum (if pitch_keycenter pitch_keycenter key)))
-      )))
+  [sfz-file region-map]
+  (let [
+        split-keys [:key :sample]
+        pre-map (select-keys region-map split-keys)
+        post-map (apply dissoc region-map split-keys) ]
+    (process-region (setup-defaults-for-region sfz-file pre-map)
+                    post-map)
+    ))
 
 (defmethod handle-section :region
   [sfz-state section]
@@ -66,7 +103,7 @@
       (throw (Exception. "No group defined before region"))
       (->>
         (opcodes->map (rest (rest section)))
-        (add-region-analysis)
+        (add-region-analysis (:sfz-file sfz-state))
         (update-in sfz-state [:groups indx :regions] conj)
         ))))
 
@@ -75,11 +112,12 @@
   (throw (Exception. "Unknown section found: " (second section))))
 
 (defn transform-parse-tree
-  [sfz]
+  [sfz-file sfz]
   (reduce handle-section
    {:control {}
     :global {}
-    :groups []} 
+    :groups []
+    :sfz-file sfz-file } 
    sfz
    ))
 
@@ -89,8 +127,8 @@
 (defn load-sfz
   [sfz-file]
   (let [sfz-txt (slurp sfz-file)
-        sfz-parse (parse-sfz sfz-txt)
-        sfz (transform-parse-tree sfz-parse)
+        sfz-parse (parse-sfz sfz-txt) 
+        sfz (transform-parse-tree sfz-file sfz-parse)
         ]
     sfz
     ))
