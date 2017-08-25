@@ -149,10 +149,10 @@
               channel-size)]
     (.order mapped-byte-buffer ByteOrder/LITTLE_ENDIAN) 
 
-    (loop [ret []]
+    (loop [ret {:wav-file-name wav-file-name}]
       (if (< (.position mapped-byte-buffer) channel-size)
         (if-let [v (read-chunk mapped-byte-buffer)]
-          (recur (conj ret v)) 
+          (recur (assoc ret (:chunk v) v)) 
           ret
           )
         ret

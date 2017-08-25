@@ -2,8 +2,16 @@
   (:require [instaparse.core :refer [defparser]]
             [score.freq :refer [str->notenum
                                 cents->scaler ]]
-            [pink.sfz.sound-file :refer :all])
-  (:import [java.io File]))
+            [pink.sfz.sound-file :refer :all]
+            [pink.util :refer :all]
+            [pink.simple]
+            )
+  (:import [java.io File]
+           [java.io RandomAccessFile]
+           [java.nio MappedByteBuffer ByteOrder]
+           [java.nio.channels FileChannel 
+            FileChannel$MapMode]
+           ))
 
 
 ;; TODO - sfz allows spaces in filesnames for samples.
@@ -165,5 +173,54 @@
 ;; 1. Lookup regions to play based upon MIDI key (allow fractional?) and MIDI velocity (again, fractional?)
 ;; 2. setup playback depending upon settings from global, group, and region
 ;; 3. Playback
+
+
+(defn region-player 
+  "Audio function for playing SFZ soundfile."
+  [regions midi-key midi-vel]
+  (let [^doubles outl (create-buffer)
+        ^doubles outr (create-buffer)
+        out (into-array [outl outr])
+        wav-data (:wav-data regions) 
+        data-start (get-in wav-data ["DATA" :data-start])
+        raf (RandomAccessFile. (:wav-file-name wav-data) "r") 
+        channel (.getChannel raf)
+        start-ptr 0 
+        map-size (- (.size channel) data-start)
+        mapped-byte-buffer
+        (.map channel
+              FileChannel$MapMode/READ_ONLY
+              data-start
+              map-size)
+        ;; hardcode to stereo short for now
+        short-len (long (/ map-size (* 2 2)))]
+    (println (.size channel) short-len wav-data)
+    (.order mapped-byte-buffer ByteOrder/LITTLE_ENDIAN) 
+    (generator
+      [read-ptr start-ptr] [] 
+      (if (and (= 0 int-indx) (>= read-ptr short-len)) 
+        (do 
+          (.close channel)
+          (.close raf)
+          nil)
+        (if (< read-ptr short-len) 
+          (do 
+            (aset outl int-indx 
+                  (/ (.getShort mapped-byte-buffer) 32768.0))
+            (aset outr int-indx 
+                  (/ (.getShort mapped-byte-buffer) 32768.0))
+            (gen-recur (unchecked-inc read-ptr)))
+          (do 
+            (aset outl int-indx 0.0)
+            (aset outr int-indx 0.0)
+            (gen-recur (unchecked-inc read-ptr)))
+          ))
+      (yield out))))
+
+(def r (first (sfz-lookup sfz-data 0 80 127)))
+(pink.simple/add-afunc (region-player r 80 127))
+
+
+(pink.simple/start-engine)
 
 
