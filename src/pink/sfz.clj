@@ -175,6 +175,23 @@
 ;; 3. Playback
 
 
+;; TODOS
+;; * get frequency from midi-key
+;; * implement phasor for freq, figure out what interpolation is used by other SFZ players
+;; * get amp for midi-vel and multiply
+;; 
+
+
+(defn vel->amp
+  ([midi-vel] (vel->amp midi-vel 20))
+  ([midi-vel db-range]
+   (let [r (Math/pow 10.0 (/ db-range 20.0))
+         b (- (/ 127. (* 126.0 (Math/sqrt r))) 
+              (/ 1.0 126.0))
+         m (/ (- 1.0 b) 127.0)
+         ]
+     (Math/pow (+ (* m midi-vel ) b) 2))))
+
 (defn region-player 
   "Audio function for playing SFZ soundfile."
   [regions midi-key midi-vel]
@@ -193,8 +210,10 @@
               data-start
               map-size)
         ;; hardcode to stereo short for now
-        short-len (long (/ map-size (* 2 2)))]
-    (println (.size channel) short-len wav-data)
+        short-len (long (/ map-size (* 2 2)))
+        amp (vel->amp midi-vel) 
+        ]
+    ;;(println (.size channel) short-len wav-data)
     (.order mapped-byte-buffer ByteOrder/LITTLE_ENDIAN) 
     (generator
       [read-ptr start-ptr] [] 
@@ -206,9 +225,9 @@
         (if (< read-ptr short-len) 
           (do 
             (aset outl int-indx 
-                  (/ (.getShort mapped-byte-buffer) 32768.0))
+                  (* amp (/ (.getShort mapped-byte-buffer) 32768.0)))
             (aset outr int-indx 
-                  (/ (.getShort mapped-byte-buffer) 32768.0))
+                  (* amp (/ (.getShort mapped-byte-buffer) 32768.0)))
             (gen-recur (unchecked-inc read-ptr)))
           (do 
             (aset outl int-indx 0.0)
@@ -217,8 +236,14 @@
           ))
       (yield out))))
 
-(def r (first (sfz-lookup sfz-data 0 80 127)))
-(pink.simple/add-afunc (region-player r 80 127))
+
+(defn play-sfz 
+  [sfz-data group midi-key midi-vel]
+  (let [regions (sfz-lookup sfz-data group midi-key midi-vel)]
+    (pink.simple/add-afunc (region-player (first regions) midi-key midi-vel))
+    ))
+
+(play-sfz sfz-data 0 60 100)
 
 
 (pink.simple/start-engine)
