@@ -1,7 +1,8 @@
 (ns pink.sfz
   (:require [instaparse.core :refer [defparser]]
             [score.freq :refer [str->notenum
-                                cents->scaler ]]
+                                cents->scaler 
+                                hertz]]
             [pink.sfz.sound-file :refer :all]
             [pink.util :refer :all]
             [pink.simple]
@@ -192,6 +193,14 @@
          ]
      (Math/pow (+ (* m midi-vel ) b) 2))))
 
+(defn calc-read-incr
+  [region-data midi-key]
+  ;; TODO - handle different SR's here?
+  (let [key-center (:pitch_keycenter region-data)
+        tuning (get region-data :tune 1.0)]
+    (* (/ (hertz midi-key) (hertz key-center))
+       tuning)))
+
 (defn region-player 
   "Audio function for playing SFZ soundfile."
   [regions midi-key midi-vel]
@@ -202,7 +211,7 @@
         data-start (get-in wav-data ["DATA" :data-start])
         raf (RandomAccessFile. (:wav-file-name wav-data) "r") 
         channel (.getChannel raf)
-        start-ptr 0 
+        start-ptr 0.0 
         map-size (- (.size channel) data-start)
         mapped-byte-buffer
         (.map channel
@@ -212,6 +221,8 @@
         ;; hardcode to stereo short for now
         short-len (long (/ map-size (* 2 2)))
         amp (vel->amp midi-vel) 
+        read-incr (calc-read-incr regions midi-key)      
+        buf-limit (- short-len 4)
         ]
     ;;(println (.size channel) short-len wav-data)
     (.order mapped-byte-buffer ByteOrder/LITTLE_ENDIAN) 
@@ -222,17 +233,25 @@
           (.close channel)
           (.close raf)
           nil)
-        (if (< read-ptr short-len) 
-          (do 
-            (aset outl int-indx 
-                  (* amp (/ (.getShort mapped-byte-buffer) 32768.0)))
-            (aset outr int-indx 
-                  (* amp (/ (.getShort mapped-byte-buffer) 32768.0)))
-            (gen-recur (unchecked-inc read-ptr)))
+        (if (< read-ptr buf-limit) 
+          (let [start (int read-ptr)
+                frac (if (zero? start) 0.0 (rem read-ptr start))
+                _ (.position mapped-byte-buffer (* start 4))
+                left0 (.getShort mapped-byte-buffer)
+                right0 (.getShort mapped-byte-buffer)
+                left1 (.getShort mapped-byte-buffer)
+                right1 (.getShort mapped-byte-buffer)
+                left (+ left0 (* frac (- left1 left0)))
+                right (+ right0 (* frac (- right1 right0)))
+                ]
+
+            (aset outl int-indx (* amp (/ left 32768.0)))
+            (aset outr int-indx (* amp (/ right 32768.0)))
+            (gen-recur (+ read-ptr read-incr)))
           (do 
             (aset outl int-indx 0.0)
             (aset outr int-indx 0.0)
-            (gen-recur (unchecked-inc read-ptr)))
+            (gen-recur (+ read-ptr read-incr)))
           ))
       (yield out))))
 
@@ -243,9 +262,15 @@
     (pink.simple/add-afunc (region-player (first regions) midi-key midi-vel))
     ))
 
-(play-sfz sfz-data 0 60 100)
+(comment
+  (play-sfz sfz-data 0 60 100)
+  (play-sfz sfz-data 0 67 100)
+  (play-sfz sfz-data 0 72 100)
+  (play-sfz sfz-data 0 77 100)
+  (play-sfz sfz-data 0 80 100)
+  (play-sfz sfz-data 0 82 100)
 
 
-(pink.simple/start-engine)
-
+  (pink.simple/start-engine)
+  )
 
