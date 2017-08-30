@@ -150,38 +150,7 @@
                   (<= midi-key (:hikey %))) 
             regions)))
 
-(def test-sfz " // group\n<group> <region> filter=4\n b=3\r\n sample=../abc/def.wav
-               <region> filter=4 b=3 sample=../abc/fgh.wav")
-
-;; http://virtualplaying.com/virtual-playing-orchestra/ 
-(def VPO2-root
-  (str (System/getenv "PINK_RESOURCE_ROOT") 
-  "/sfz/Virtual-Playing-Orchestra2"))
-
-(def test-sfz-file
-  (str VPO2-root
-       "/Strings/1st-violin-SEC-sustain.sfz"))
-
-#_(transform-parse-tree (parse-sfz test-sfz))
-
-(def sfz-data (load-sfz test-sfz-file))
-
-#_(clojure.pprint/pprint (parse-sfz (slurp test-sfz-file)))
-#_(clojure.pprint/pprint sfz-data)
-
-
-;; Process
-;; 1. Lookup regions to play based upon MIDI key (allow fractional?) and MIDI velocity (again, fractional?)
-;; 2. setup playback depending upon settings from global, group, and region
-;; 3. Playback
-
-
-;; TODOS
-;; * get frequency from midi-key
-;; * implement phasor for freq, figure out what interpolation is used by other SFZ players
-;; * get amp for midi-vel and multiply
-;; 
-
+;; PLAYBACK 
 
 (defn vel->amp
   ([midi-vel] (vel->amp midi-vel 20))
@@ -208,6 +177,7 @@
         ^doubles outr (create-buffer)
         out (into-array [outl outr])
         wav-data (:wav-data regions) 
+        num-channels (long (get-in wav-data ["fmt " :num-channels]))
         data-start (get-in wav-data ["DATA" :data-start])
         raf (RandomAccessFile. (:wav-file-name wav-data) "r") 
         channel (.getChannel raf)
@@ -219,41 +189,68 @@
               data-start
               map-size)
         ;; hardcode to stereo short for now
-        short-len (long (/ map-size (* 2 2)))
+        short-len (long (/ map-size (* num-channels 2)))
         amp (vel->amp midi-vel) 
         read-incr (calc-read-incr regions midi-key)      
-        buf-limit (- short-len 4)
+        buf-limit (- short-len (* 2 num-channels))
         ]
     ;;(println (.size channel) short-len wav-data)
     (.order mapped-byte-buffer ByteOrder/LITTLE_ENDIAN) 
-    (generator
-      [read-ptr start-ptr] [] 
-      (if (and (= 0 int-indx) (>= read-ptr short-len)) 
-        (do 
-          (.close channel)
-          (.close raf)
-          nil)
-        (if (< read-ptr buf-limit) 
-          (let [start (int read-ptr)
-                frac (if (zero? start) 0.0 (rem read-ptr start))
-                _ (.position mapped-byte-buffer (* start 4))
-                left0 (.getShort mapped-byte-buffer)
-                right0 (.getShort mapped-byte-buffer)
-                left1 (.getShort mapped-byte-buffer)
-                right1 (.getShort mapped-byte-buffer)
-                left (+ left0 (* frac (- left1 left0)))
-                right (+ right0 (* frac (- right1 right0)))
-                ]
-
-            (aset outl int-indx (* amp (/ left 32768.0)))
-            (aset outr int-indx (* amp (/ right 32768.0)))
-            (gen-recur (+ read-ptr read-incr)))
+    (if (= 2 num-channels)
+      (generator
+        [read-ptr start-ptr] [] 
+        (if (and (= 0 int-indx) (>= read-ptr short-len)) 
           (do 
-            (aset outl int-indx 0.0)
-            (aset outr int-indx 0.0)
-            (gen-recur (+ read-ptr read-incr)))
-          ))
-      (yield out))))
+            (.close channel)
+            (.close raf)
+            nil)
+          (if (< read-ptr buf-limit) 
+            (let [start (int read-ptr)
+                  frac (if (zero? start) 0.0 (rem read-ptr start))
+                  _ (.position mapped-byte-buffer (* start 4))
+                  left0 (.getShort mapped-byte-buffer)
+                  right0 (.getShort mapped-byte-buffer)
+                  left1 (.getShort mapped-byte-buffer)
+                  right1 (.getShort mapped-byte-buffer)
+                  left (+ left0 (* frac (- left1 left0)))
+                  right (+ right0 (* frac (- right1 right0)))
+                  ]
+
+              (aset outl int-indx (* amp (/ left 32768.0)))
+              (aset outr int-indx (* amp (/ right 32768.0)))
+              (gen-recur (+ read-ptr read-incr)))
+            (do 
+              (aset outl int-indx 0.0)
+              (aset outr int-indx 0.0)
+              (gen-recur (+ read-ptr read-incr)))
+            ))
+        (yield out))
+      (generator
+        [read-ptr start-ptr] [] 
+        (if (and (= 0 int-indx) (>= read-ptr short-len)) 
+          (do 
+            (.close channel)
+            (.close raf)
+            nil)
+          (if (< read-ptr buf-limit) 
+            (let [start (int read-ptr)
+                  frac (if (zero? start) 0.0 (rem read-ptr start))
+                  _ (.position mapped-byte-buffer (* start 2))
+                  left0 (.getShort mapped-byte-buffer)
+                  left1 (.getShort mapped-byte-buffer)
+                  left (+ left0 (* frac (- left1 left0)))
+                  ]
+
+              (aset outl int-indx (* amp (/ left 32768.0)))
+              (aset outr int-indx (* amp (/ left 32768.0)))
+              (gen-recur (+ read-ptr read-incr)))
+            (do 
+              (aset outl int-indx 0.0)
+              (aset outr int-indx 0.0)
+              (gen-recur (+ read-ptr read-incr)))
+            ))
+        (yield out))
+      )))
 
 
 (defn play-sfz 
@@ -262,15 +259,64 @@
     (pink.simple/add-afunc (region-player (first regions) midi-key midi-vel))
     ))
 
-(comment
-  (play-sfz sfz-data 0 60 100)
-  (play-sfz sfz-data 0 67 100)
-  (play-sfz sfz-data 0 72 100)
-  (play-sfz sfz-data 0 77 100)
-  (play-sfz sfz-data 0 80 100)
-  (play-sfz sfz-data 0 82 100)
 
+;; DEV TEST
+
+
+(def test-sfz " // group\n<group> <region> filter=4\n b=3\r\n sample=../abc/def.wav
+               <region> filter=4 b=3 sample=../abc/fgh.wav")
+
+;; http://virtualplaying.com/virtual-playing-orchestra/ 
+(def VPO2-root
+  (str (System/getenv "PINK_RESOURCE_ROOT") 
+  "/sfz/Virtual-Playing-Orchestra2"))
+
+(def test-sfz-file
+  (str VPO2-root
+       "/Strings/1st-violin-SEC-sustain.sfz"))
+
+#_(transform-parse-tree (parse-sfz test-sfz))
+
+(def sfz1 
+  (load-sfz 
+    (str VPO2-root "/Strings/1st-violin-SEC-sustain.sfz")))
+
+(def sfz2
+  (load-sfz 
+    (str VPO2-root "/Brass/trumpet-SOLO-sustain.sfz")))
+
+#_(clojure.pprint/pprint (parse-sfz (slurp test-sfz-file)))
+#_(clojure.pprint/pprint sfz-data)
+
+
+;; Process
+;; 1. Lookup regions to play based upon MIDI key (allow fractional?) and MIDI velocity (again, fractional?)
+;; 2. setup playback depending upon settings from global, group, and region
+;; 3. Playback
+
+
+;; TODOS
+;; * get frequency from midi-key
+;; * implement phasor for freq, figure out what interpolation is used by other SFZ players
+;; * get amp for midi-vel and multiply
+;; 
+
+
+
+(comment
 
   (pink.simple/start-engine)
+  (play-sfz sfz1 0 60 100)
+  (play-sfz sfz1 0 67 100)
+  (play-sfz sfz1 0 72 100)
+  (play-sfz sfz1 0 77 100)
+  (play-sfz sfz1 0 80 100)
+  (play-sfz sfz1 0 82 100)
+
+  (play-sfz sfz2 0 72 64)
+  (play-sfz sfz2 0 64 100)
+  (play-sfz sfz2 0 60 100)
+
+
   )
 
